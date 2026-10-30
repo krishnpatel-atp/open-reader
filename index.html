@@ -285,7 +285,7 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
       <div>
         <h4>What to read</h4>
         <label class="opt"><input type="checkbox" id="optMath" checked> Read maths and physics properly</label>
-        <label class="opt"><input type="checkbox" id="optCommas" checked> Don't read commas</label>
+        <label class="opt"><input type="checkbox" id="optCommas" checked> Skip comma pauses (device voices only)</label>
         <label class="opt"><input type="checkbox" id="optDashes" checked> Don't read dashes</label>
         <label class="opt"><input type="checkbox" id="optCite" checked> Skip references like [12] and (3.4)</label>
         <label class="opt"><input type="checkbox" id="optPageNums" checked> Skip page numbers</label>
@@ -331,7 +331,7 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
     docKey: "sample", scale: 1, fit: true, visible: new Set(), current: null, wake: null,
     rate: store.get("rate", 0.9), optVersion: 0, hlPage: -1,
   };
-  const K = { worker: null, ready: null, device: null, gpu: undefined, pending: new Map(), nextId: 1, cache: new Map(), ctx: null, gain: null, source: null };
+  const K = { worker: null, ready: null, device: null, gpu: undefined, pending: new Map(), nextId: 1, cache: new Map(), ctx: null, gain: null, source: null, sources: new Set(), timers: [] };
   const gpuCheck = (async () => { try { return !!(navigator.gpu && await navigator.gpu.requestAdapter()); } catch { return false; } })();
   if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
@@ -500,15 +500,17 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
       for (const [re, w] of SYM) s = s.replace(re, w);
     }
 
+    // Natural voices never say "comma" or "dash" out loud; they use them to breathe, so keep them as pauses.
+    const natural = isNatural();
     if (opts.dashes.checked) {
       s = s.replace(/(\d\w*)\s?[–—]\s?(\d)/g, "$1 to $2");
-      s = s.replace(/[–—―]/g, " ");
+      s = s.replace(/\s*[–—―]\s*/g, natural ? ", " : " ");
       s = s.replace(/(\p{L})-(?=\p{L})/gu, "$1 ");
-      s = s.replace(/\s-+\s/g, " ").replace(/^-+\s|\s-+$/g, " ");
+      s = s.replace(/\s-+\s/g, natural ? ", " : " ").replace(/^-+\s|\s-+$/g, " ");
     }
-    if (opts.commas.checked) s = s.replace(/,/g, " ");
+    if (opts.commas.checked && !natural) s = s.replace(/,/g, " ");
     s = s.replace(/[(){}\[\]]/g, " ");
-    return s.replace(/\s+/g, " ").replace(/\s+([.?!;:])/g, "$1").trim();
+    return s.replace(/\s+/g, " ").replace(/\s+([.?!;:,])/g, "$1").replace(/,+/g, ",").replace(/^,\s*/, "").trim();
   }
 
   // =====================================================================
@@ -579,7 +581,7 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
     for (let [a, b] of segs) {
       while (a < b && /\s/.test(text[a])) a++;
       while (b > a && /\s/.test(text[b - 1])) b--;
-      if (b > a) chunkRange(text, a, b, 200, out);
+      if (b > a) chunkRange(text, a, b, 300, out);
     }
     return out;
   }
@@ -809,22 +811,22 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
   }
   // Natural voices come from Kokoro, a small open speech model that runs on this device.
   const NATURAL = [
-    ["bf_emma", "Emma", "British, calm"],
-    ["bf_isabella", "Isabella", "British, warm"],
-    ["bf_lily", "Lily", "British, soft"],
-    ["bf_alice", "Alice", "British, clear"],
-    ["bm_george", "George", "British, deep and steady"],
-    ["bm_fable", "Fable", "British, storyteller"],
-    ["bm_lewis", "Lewis", "British, relaxed"],
-    ["bm_daniel", "Daniel", "British, measured"],
-    ["af_heart", "Heart", "American, warmest"],
-    ["af_bella", "Bella", "American, smooth"],
-    ["af_nicole", "Nicole", "American, gentle and quiet"],
-    ["af_sarah", "Sarah", "American, bright"],
-    ["am_michael", "Michael", "American, steady"],
-    ["am_fenrir", "Fenrir", "American, deep"],
+    ["af_heart", "Heart", "American woman, most natural"],
+    ["af_bella", "Bella", "American woman, smooth"],
+    ["bf_emma", "Emma", "British woman, calm"],
+    ["bf_isabella", "Isabella", "British woman, warm"],
+    ["bf_lily", "Lily", "British woman, soft"],
+    ["bf_alice", "Alice", "British woman, clear"],
+    ["bm_george", "George", "British man, deep and steady"],
+    ["bm_fable", "Fable", "British man, storyteller"],
+    ["bm_lewis", "Lewis", "British man, relaxed"],
+    ["bm_daniel", "Daniel", "British man, measured"],
+    ["af_nicole", "Nicole", "American woman, gentle and quiet"],
+    ["af_sarah", "Sarah", "American woman, bright"],
+    ["am_michael", "Michael", "American man, steady"],
+    ["am_fenrir", "Fenrir", "American man, deep"],
   ];
-  const DEFAULT_NATURAL = "k:bf_emma";
+  const DEFAULT_NATURAL = "k:af_heart"; // rated the most natural by Kokoro's makers
   const isGB = (v) => /^en[-_]gb$/i.test(v.lang);
   const isNatural = () => els.voice.value.startsWith("k:");
   const naturalId = () => els.voice.value.slice(2);
@@ -860,7 +862,7 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
     $("#voiceTip").textContent = isNatural()
       ? (K.gpu === false
         ? "Natural voices run on your computer. This browser has no graphics acceleration, so they may pause between sentences. Chrome, Edge or Safari on a recent Mac run them smoothly."
-        : "Natural voices run on your computer, so they're free and unlimited. The first time, the voice downloads once (about 160 MB). After that it starts in a few seconds.")
+        : "Natural voices run on your computer, so they're free and unlimited. The first time, the voice downloads once (about 330 MB). After that it starts in a few seconds.")
       : "Device voices start instantly but can sound robotic. Choose a Natural voice at the top of the list for a smooth, human sound.";
   }
   const currentVoice = () => state.voices.find((v) => "d:" + v.voiceURI === els.voice.value) || null;
@@ -877,7 +879,11 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
   function cancelSpeech() {
     state.token++;
     if (synth) synth.cancel();
-    if (K.source) { K.source.onended = null; try { K.source.stop(); } catch {} K.source = null; }
+    for (const src of K.sources) { src.onended = null; try { src.stop(); } catch {} }
+    K.sources.clear();
+    K.source = null;
+    for (const t of K.timers) clearTimeout(t);
+    K.timers.length = 0;
   }
 
   // ---------- Natural voice engine ----------
@@ -999,13 +1005,14 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
       const gpu = await gpuCheck;
       K.device = gpu ? "webgpu" : "wasm";
       showLoad("Starting the natural voice…", 0);
+      // fp32 on the graphics chip: the smaller fp16 version comes out as static on some sentences.
       const start = (engine) => new Promise((resolve, reject) => {
         K.worker = engine;
         engine.onerror = (e) => { if (e && e.preventDefault) e.preventDefault(); reject(new Error((e && e.message) || "the background voice helper was blocked")); };
         engine.onmessage = (e) => {
           const m = e.data;
           if (m.type === "progress") {
-            showLoad(m.pct >= 100 ? "Almost ready…" : `Downloading the natural voice: ${m.pct}% of ${Math.round(m.total / 1e6)} MB. This only happens once.`, m.pct);
+            showLoad(m.pct >= 100 ? "Almost ready…" : `Downloading the natural voice: ${m.pct}% of ${Math.round(m.total / 1e6)} MB. This only happens once, then it works offline.`, m.pct);
           } else if (m.type === "ready") resolve();
           else if (m.type === "error") reject(new Error(m.message));
           else if (m.type === "audio") {
@@ -1015,7 +1022,7 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
             if (m.error) p.reject(new Error(m.error)); else p.resolve(m.audio ? { audio: m.audio, rate: m.rate } : null);
           }
         };
-        engine.postMessage({ type: "load", base: document.baseURI, device: K.device, dtype: gpu ? "fp16" : "q8", voice: isNatural() ? naturalId() : "bf_emma", preferLocal: /[?&]localvoice\b/.test(location.search) });
+        engine.postMessage({ type: "load", base: document.baseURI, device: K.device, dtype: gpu ? "fp32" : "q8", voice: isNatural() ? naturalId() : "bf_emma", preferLocal: /[?&]localvoice\b/.test(location.search) });
       });
       const forceInPage = /[?&]inpage\b/.test(location.search);
       try {
@@ -1045,7 +1052,7 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
     store.set("naturalCached", false);
     const best = state.voices.find(isGB) || state.voices[0];
     if (best && isNatural()) { els.voice.value = "d:" + best.voiceURI; updateVoiceUI(); }
-    showStatus(`The natural voice couldn't start in this browser (${(err && err.message) || err}). Using your device's voice for now.`, true);
+    showStatus(`The natural voice couldn't start here (${(err && err.message) || err}). Using your device's voice for now. Natural voices work best in the Open Reader app: https://krishnpatel-atp.github.io/open-reader/`, true);
     if (wasPlaying && best) speakFrom(state.idx);
   }
   const audioSuffix = () => `|${els.voice.value}|${state.rate}|${state.optVersion}`;
@@ -1072,27 +1079,78 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
     for (let j = i + 1; j < state.sentences.length; j++) if (spoken(j)) return j;
     return -1;
   }
-  function playBuffer(res, onEnd) {
-    const buf = K.ctx.createBuffer(1, res.audio.length, res.rate);
-    buf.copyToChannel(res.audio, 0);
+  // Turns the model's output into a clip: trims dead air at both ends and softens the edges so nothing clicks.
+  function makeClip(res) {
+    const a = res.audio, rate = res.rate, quiet = 0.004, keep = Math.round(rate * 0.03);
+    let bad = 0;
+    for (let k = 0; k < a.length; k++) if (!Number.isFinite(a[k])) { a[k] = 0; bad++; }
+    if (bad > a.length * 0.01) throw new Error("the voice produced broken audio on this computer");
+    let s = 0, e = a.length;
+    while (s < e && Math.abs(a[s]) < quiet) s++;
+    while (e > s && Math.abs(a[e - 1]) < quiet) e--;
+    s = Math.max(0, s - keep); e = Math.min(a.length, e + keep);
+    const data = a.slice(s, e), fade = Math.min(Math.round(rate * 0.012), data.length >> 1);
+    for (let k = 0; k < fade; k++) { const g = k / fade; data[k] *= g; data[data.length - 1 - k] *= g; }
+    const buf = K.ctx.createBuffer(1, Math.max(1, data.length), rate);
+    buf.copyToChannel(data, 0);
+    return buf;
+  }
+  function schedule(buf, when) {
     const src = K.ctx.createBufferSource();
     src.buffer = buf;
     src.connect(K.gain);
-    src.onended = () => { if (K.source !== src) return; K.source = null; if (onEnd) onEnd(); };
+    src.onended = () => K.sources.delete(src);
+    K.sources.add(src);
     K.source = src;
-    src.start();
+    src.start(when);
+    return src;
   }
+  function atTime(when, fn) {
+    K.timers.push(setTimeout(fn, Math.max(0, (when - K.ctx.currentTime) * 1000)));
+  }
+  function playBuffer(res) { schedule(makeClip(res), K.ctx.currentTime + 0.02); }
+  // A short breath after each sentence, a longer one after a heading or the end of a paragraph.
+  function pauseAfter(i) {
+    const sn = state.sentences[i], next = state.sentences[i + 1];
+    const raw = sn.raw.trim();
+    let gap = /[.?!]["'”’)\]]*$/.test(raw) ? 0.32 : /[,;:]$/.test(raw) ? 0.18 : 0.5;
+    if (next && /\n/.test(state.pages[sn.p].text.slice(sn.b, next.p === sn.p ? next.a : sn.b + 1))) gap = Math.max(gap, 0.55);
+    return gap / Math.min(2, Math.max(0.5, state.rate));
+  }
+  function setCurrent(i) {
+    state.idx = i;
+    store.set("pos." + state.docKey, i);
+    highlight(i, true);
+    els.caption.textContent = spoken(i);
+    updateUI();
+  }
+  // Each sentence is lined up to start exactly when the previous one ends, so the reading flows.
   async function playNatural(i, my) {
+    const live = () => my === state.token && state.playing;
     try {
       await loadNatural();
-      if (my !== state.token || !state.playing) return;
-      trimCache(i, i + 3);
-      const current = getAudio(i);
-      for (let j = i, n = 0; n < 2; n++) { j = nextSpoken(j); if (j < 0) break; getAudio(j); } // get ahead so there are no gaps
-      const res = await current;
-      if (my !== state.token || !state.playing) return;
-      if (!res) { speakFrom(i + 1); return; }
-      playBuffer(res, () => { if (my === state.token && state.playing) speakFrom(i + 1); });
+      if (!live()) return;
+      let cur = i, t = K.ctx.currentTime + 0.05;
+      for (;;) {
+        trimCache(cur, cur + 4);
+        const pending = getAudio(cur);
+        for (let j = cur, n = 0; n < 3; n++) { j = nextSpoken(j); if (j < 0) break; getAudio(j); } // get ahead
+        const res = await pending;
+        if (!live()) return;
+        t = Math.max(t, K.ctx.currentTime + 0.03);
+        if (res) {
+          const buf = makeClip(res), at = t, idx = cur;
+          schedule(buf, at);
+          if (idx !== i) atTime(at, () => { if (live()) setCurrent(idx); });
+          t = at + buf.duration + pauseAfter(cur);
+        }
+        const nxt = nextSpoken(cur);
+        if (nxt < 0) { atTime(t, () => { if (live()) finished(); }); return; }
+        cur = nxt;
+        // wait until shortly before this sentence ends before lining up the next, so a jump or pause stays instant
+        const lead = t - K.ctx.currentTime - 1.5;
+        if (lead > 0) { await new Promise((r) => atTime(K.ctx.currentTime + lead, r)); if (!live()) return; }
+      }
     } catch (err) {
       if (my === state.token) naturalFailed(err);
     }
@@ -1195,6 +1253,7 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
   const SAMPLE_LINE = "Hello. This is how I sound when reading your document.";
   els.voice.addEventListener("change", async () => {
     store.set("voice", els.voice.value);
+    state.optVersion++; // natural and device voices prepare text a little differently
     updateVoiceUI();
     showStatus("");
     if (state.playing) { restartIfPlaying(); return; }
@@ -1343,7 +1402,7 @@ kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--li
     loadPdf(samplePdf(), "Sample: Kinematics and energy", "sample").catch((err) => showStatus("Couldn't draw the sample page: " + err.message, true));
   } else showStatus("The PDF viewer couldn't load. Check your internet connection and refresh.", true);
 
-  window.__openReader = { toSpeech, state, K }; // handy for checking how a line will be read
+  window.__openReader = { toSpeech, state, K, loadNatural, genNatural, spoken }; // handy for checking how a line will be read
 })();
 </script>
 
