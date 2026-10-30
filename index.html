@@ -1,0 +1,1351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="Free, unlimited PDF read-aloud with natural voices and proper maths reading.">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#151b25" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Open Reader">
+<style>html{color-scheme:light}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}img{max-width:100%}</style>
+<script>
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+  addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+</script>
+<title>Open Reader</title>
+
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=JetBrains+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+/* Layout: a PDF viewer. Sticky toolbar on top, real PDF pages on a grey desk, a fixed player docked at the bottom. */
+:root {
+  --desk: #dfe3ea;
+  --chrome: #ffffff;
+  --ink: #18202c;
+  --muted: #5a6575;
+  --line: #d3d9e2;
+  --accent: #2a48d4;
+  --accent-ink: #ffffff;
+  --hover: #e8ecfb;
+  --chip: #f1f3f7;
+  --danger: #b4232f;
+  --mark: rgba(255, 213, 0, 0.5);
+  --mark-edge: rgba(214, 160, 0, 0.9);
+  --f-ui: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --top-h: 56px;
+  --bar-h: 150px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --desk: #0c1016; --chrome: #151b25; --ink: #e5e9f0; --muted: #98a2b3; --line: #273041;
+    --accent: #8da0ff; --accent-ink: #0d1118; --hover: #1e2740; --chip: #1c2330; --danger: #ff8a93;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --desk: #0c1016; --chrome: #151b25; --ink: #e5e9f0; --muted: #98a2b3; --line: #273041;
+  --accent: #8da0ff; --accent-ink: #0d1118; --hover: #1e2740; --chip: #1c2330; --danger: #ff8a93;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  background: var(--desk); color: var(--ink); font-family: var(--f-ui); margin: 0;
+  padding-block: 0 calc(var(--bar-h) + 24px);
+}
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--chrome); }
+
+/* ---------- Toolbar ---------- */
+.toolbar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+  background: var(--chrome); border-bottom: 1px solid var(--line);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 8px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+}
+.logo { font-weight: 700; font-size: 1.05rem; letter-spacing: -0.01em; white-space: nowrap; }
+.tb-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 260px; }
+.docname { color: var(--muted); font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tb-group { display: flex; align-items: center; gap: 4px; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; white-space: nowrap;
+  border: 1px solid var(--line); background: var(--chrome); border-radius: 8px;
+  padding: 7px 12px; font-size: 0.88rem; font-weight: 500; min-height: 36px;
+}
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.sq { padding: 0; width: 36px; }
+.btn svg { width: 17px; height: 17px; flex: none; }
+.pagebox { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pagebox input {
+  width: 3.4em; text-align: center; border: 1px solid var(--line); border-radius: 6px; padding: 6px 4px;
+  background: var(--chip); color: var(--ink); -moz-appearance: textfield;
+}
+.pagebox input::-webkit-inner-spin-button { -webkit-appearance: none; }
+#zoomLabel { min-width: 64px; font-variant-numeric: tabular-nums; }
+input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+.status {
+  margin: 12px auto 0; width: fit-content; max-width: calc(100% - 32px);
+  padding: 9px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--chrome); font-size: 0.88rem;
+}
+.status.error { border-color: var(--danger); color: var(--danger); }
+
+/* ---------- PDF pages ---------- */
+#viewer {
+  padding: 20px max(16px, env(safe-area-inset-right, 0px)) 20px max(16px, env(safe-area-inset-left, 0px));
+  display: flex; flex-direction: column; align-items: center; gap: 18px;
+  overflow-x: auto;
+}
+.page {
+  position: relative; flex: none; background: #fff; cursor: pointer;
+  box-shadow: 0 1px 3px rgba(10, 14, 22, .18), 0 6px 20px rgba(10, 14, 22, .08);
+}
+.page canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.page .hl { position: absolute; inset: 0; pointer-events: none; }
+.page .hl div {
+  position: absolute; background: var(--mark); mix-blend-mode: multiply; border-radius: 2px;
+  box-shadow: inset 0 -2px 0 var(--mark-edge);
+}
+.page .num {
+  position: absolute; top: 100%; left: 0; right: 0; text-align: center; padding-top: 3px;
+  font-family: var(--f-mono); font-size: 0.68rem; color: var(--muted);
+}
+.page .loading { position: absolute; inset: 0; display: grid; place-items: center; color: #8a93a3; font-size: 0.85rem; }
+
+.drop {
+  position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--desk) 85%, transparent);
+  border: 3px dashed var(--accent); font-size: 1.3rem; font-weight: 700; color: var(--accent);
+}
+
+/* ---------- Player ---------- */
+.player {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  background: var(--chrome); border-top: 1px solid var(--line);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: 10px; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -6px 24px rgba(10, 14, 22, .07);
+}
+.player-inner { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.caprow { display: flex; gap: 12px; align-items: baseline; min-width: 0; }
+.caprow .lbl { font-family: var(--f-mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); flex: none; }
+#caption {
+  flex: 1; min-width: 0; font-size: 0.92rem; line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+#progress { flex: none; font-family: var(--f-mono); font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.cgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tbtn {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap;
+  border: 1px solid var(--line); background: var(--chip); border-radius: 10px;
+  padding: 8px 13px; font-size: 0.9rem; font-weight: 500; min-height: 42px;
+}
+.tbtn:hover { background: var(--hover); }
+.tbtn svg { width: 18px; height: 18px; flex: none; }
+.tbtn.play { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); min-width: 118px; justify-content: center; font-weight: 700; font-size: 1rem; min-height: 48px; border-radius: 24px; }
+.tbtn.play:hover { filter: brightness(1.08); }
+.tbtn.play svg { width: 20px; height: 20px; }
+.tbtn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.speed { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; background: var(--chip); min-height: 42px; }
+.speed button { border: 0; background: none; cursor: pointer; width: 38px; height: 40px; font-size: 1.15rem; border-radius: 10px; }
+.speed button:hover { background: var(--hover); }
+.speed output { min-width: 4.6em; text-align: center; font-family: var(--f-mono); font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+.speed output small { display: block; font-family: var(--f-ui); font-size: 0.66rem; color: var(--muted); line-height: 1; }
+#voice { border: 1px solid var(--line); background: var(--chip); border-radius: 10px; padding: 0 10px; min-height: 42px; width: 290px; max-width: 100%; color: var(--ink); }
+.kload { display: grid; gap: 5px; font-size: 0.82rem; color: var(--muted); }
+.kbar { height: 6px; border-radius: 3px; background: var(--chip); overflow: hidden; border: 1px solid var(--line); }
+.kbar div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.settings input:disabled { opacity: .4; }
+
+.settings {
+  border-top: 1px solid var(--line); padding-top: 12px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 14px 24px; font-size: 0.88rem;
+  max-height: 42vh; overflow-y: auto;
+}
+.settings h4 { margin: 0 0 8px; font-size: 0.72rem; font-family: var(--f-mono); font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.settings .opt { display: flex; align-items: center; gap: 9px; padding: 4px 0; cursor: pointer; }
+.settings .opt input { width: 17px; height: 17px; accent-color: var(--accent); flex: none; }
+.settings .slider { display: grid; grid-template-columns: 4.5em 1fr 3.4em; align-items: center; gap: 8px; padding: 4px 0; }
+.settings .slider input { width: 100%; accent-color: var(--accent); }
+.settings output { font-family: var(--f-mono); font-size: 0.78rem; text-align: right; }
+.settings p { margin: 0 0 6px; color: var(--muted); line-height: 1.5; max-width: 60ch; }
+kbd { font-family: var(--f-mono); font-size: 0.75rem; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--chip); color: var(--ink); }
+
+@media (max-width: 720px) {
+  .tbtn .opt-label { display: none; }
+  .tbtn { padding: 8px 11px; }
+  .controls { justify-content: center; }
+  .cgroup { justify-content: center; }
+  #voice { width: 100%; }
+  .cgroup.right { width: 100%; flex-wrap: nowrap; }
+  .cgroup.right #voice { flex: 1; width: auto; min-width: 0; }
+  .cgroup:first-child { flex-wrap: nowrap; }
+  .tbtn.play { min-width: 96px; }
+  #progress { display: none; }
+  .logo { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+</head>
+<body>
+<header class="toolbar">
+  <div class="tb-left">
+    <span class="logo">Open Reader</span>
+    <label class="btn primary" for="file">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 18v-6M9 15l3-3 3 3"/></svg>
+      Open PDF
+    </label>
+    <input type="file" id="file" accept="application/pdf,.pdf">
+    <span class="docname" id="docName">Sample: Kinematics and energy</span>
+  </div>
+  <div class="tb-group" aria-label="Pages">
+    <button class="btn sq" id="prevPage" type="button" title="Previous page" aria-label="Previous page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+    </button>
+    <span class="pagebox"><input id="pageNum" type="number" min="1" value="1" aria-label="Page number"> of <span id="pageCount">1</span></span>
+    <button class="btn sq" id="nextPage" type="button" title="Next page" aria-label="Next page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+  </div>
+  <div class="tb-group" aria-label="Zoom">
+    <button class="btn sq" id="zoomOut" type="button" title="Zoom out" aria-label="Zoom out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+    </button>
+    <button class="btn" id="zoomLabel" type="button" title="Fit to width">Fit</button>
+    <button class="btn sq" id="zoomIn" type="button" title="Zoom in" aria-label="Zoom in">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14M12 5v14"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="status" id="status" hidden></div>
+<main id="viewer" aria-label="PDF pages"></main>
+<div class="drop" id="drop" hidden>Drop your PDF to start reading</div>
+
+<div class="player" id="player">
+  <div class="player-inner">
+    <div class="caprow">
+      <span class="lbl">Saying</span>
+      <span id="caption">Press Play, or click any line on the page to start reading from there.</span>
+      <span id="progress"></span>
+    </div>
+    <div class="kload" id="kload" hidden>
+      <span id="kloadText"></span>
+      <div class="kbar"><div id="kbarFill"></div></div>
+    </div>
+    <div class="controls">
+      <div class="cgroup">
+        <button class="tbtn" id="back" type="button" title="Go back one sentence (←)">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg><span class="opt-label">Back</span>
+        </button>
+        <button class="tbtn play" id="play" type="button" title="Play or pause (Space)">
+          <svg id="icoPlay" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>
+          <svg id="icoPause" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>
+          <span id="playLabel">Play</span>
+        </button>
+        <button class="tbtn" id="fwd" type="button" title="Skip to next sentence (→)">
+          <span class="opt-label">Skip</span><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg>
+        </button>
+        <button class="tbtn" id="repeat" type="button" title="Say the current sentence again (R)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg><span class="opt-label">Repeat</span>
+        </button>
+        <button class="tbtn" id="readPage" type="button" title="Start reading from the top of the page you're looking at (P)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg><span class="opt-label">Read this page</span>
+        </button>
+      </div>
+      <div class="cgroup right">
+        <div class="speed" title="Reading speed ([ and ])">
+          <button type="button" id="slower" aria-label="Slower">−</button>
+          <output id="speedOut"><small>speed</small>0.90×</output>
+          <button type="button" id="faster" aria-label="Faster">+</button>
+        </div>
+        <select id="voice" aria-label="Voice"></select>
+        <button class="tbtn" id="settingsBtn" type="button" aria-expanded="false" aria-controls="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg><span class="opt-label">Settings</span>
+        </button>
+      </div>
+    </div>
+    <div class="settings" id="settings" hidden>
+      <div>
+        <h4>What to read</h4>
+        <label class="opt"><input type="checkbox" id="optMath" checked> Read maths and physics properly</label>
+        <label class="opt"><input type="checkbox" id="optCommas" checked> Don't read commas</label>
+        <label class="opt"><input type="checkbox" id="optDashes" checked> Don't read dashes</label>
+        <label class="opt"><input type="checkbox" id="optCite" checked> Skip references like [12] and (3.4)</label>
+        <label class="opt"><input type="checkbox" id="optPageNums" checked> Skip page numbers</label>
+        <label class="opt"><input type="checkbox" id="optFollow" checked> Scroll the page to follow along</label>
+      </div>
+      <div>
+        <h4>Voice</h4>
+        <div class="slider" title="Pitch only changes device voices"><span>Pitch</span><input type="range" id="pitch" min="0.6" max="1.4" step="0.05" value="1"><output id="pitchOut">1.00</output></div>
+        <div class="slider"><span>Volume</span><input type="range" id="vol" min="0" max="1" step="0.05" value="1"><output id="volOut">100%</output></div>
+        <p id="voiceTip"></p>
+      </div>
+      <div>
+        <h4>Shortcuts</h4>
+        <p><kbd>Space</kbd> play or pause · <kbd>←</kbd> <kbd>→</kbd> back or skip · <kbd>R</kbd> repeat · <kbd>P</kbd> read this page · <kbd>[</kbd> <kbd>]</kbd> speed · <kbd>+</kbd> <kbd>−</kbd> zoom</p>
+        <p>Click any line on the PDF to start reading there. Nothing is uploaded: the PDF stays on your device.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const synth = window.speechSynthesis;
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem("openreader2." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem("openreader2." + k, JSON.stringify(v)); } catch {} },
+  };
+  const els = {
+    viewer: $("#viewer"), status: $("#status"), docName: $("#docName"), pageNum: $("#pageNum"), pageCount: $("#pageCount"),
+    zoomLabel: $("#zoomLabel"), caption: $("#caption"), progress: $("#progress"), play: $("#play"), playLabel: $("#playLabel"),
+    icoPlay: $("#icoPlay"), icoPause: $("#icoPause"), voice: $("#voice"), speedOut: $("#speedOut"),
+    pitch: $("#pitch"), vol: $("#vol"), settings: $("#settings"), player: $("#player"),
+  };
+  const opts = {
+    math: $("#optMath"), commas: $("#optCommas"), dashes: $("#optDashes"),
+    cite: $("#optCite"), pageNums: $("#optPageNums"), follow: $("#optFollow"),
+  };
+
+  const state = {
+    pdf: null, pages: [], sentences: [], idx: 0, playing: false, token: 0, voices: [],
+    docKey: "sample", scale: 1, fit: true, visible: new Set(), current: null, wake: null,
+    rate: store.get("rate", 0.9), optVersion: 0, hlPage: -1,
+  };
+  const K = { worker: null, ready: null, device: null, gpu: undefined, pending: new Map(), nextId: 1, cache: new Map(), ctx: null, gain: null, source: null };
+  const gpuCheck = (async () => { try { return !!(navigator.gpu && await navigator.gpu.requestAdapter()); } catch { return false; } })();
+  if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  // =====================================================================
+  //  Speaking maths: turns what's printed into what a person would say
+  // =====================================================================
+  const SUP = { "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9", "⁺": "+", "⁻": "-", "⁼": "=", "⁽": "(", "⁾": ")", "ⁿ": "n", "ⁱ": "i" };
+  const SUB = { "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4", "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9", "₊": "+", "₋": "-", "₌": "=", "₍": "(", "₎": ")", "ₐ": "a", "ₑ": "e", "ₒ": "o", "ₓ": "x", "ᵢ": "i", "ⱼ": "j", "ₖ": "k", "ₗ": "l", "ₘ": "m", "ₙ": "n", "ₚ": "p", "ₛ": "s", "ₜ": "t" };
+  const GREEK = {
+    "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "ε": "epsilon", "ϵ": "epsilon", "ζ": "zeta", "η": "eta",
+    "θ": "theta", "ϑ": "theta", "ι": "iota", "κ": "kappa", "λ": "lambda", "μ": "mu", "ν": "nu", "ξ": "xi", "ο": "o",
+    "π": "pi", "ρ": "rho", "ϱ": "rho", "σ": "sigma", "ς": "sigma", "τ": "tau", "υ": "upsilon", "φ": "phi", "ϕ": "phi",
+    "χ": "chi", "ψ": "psi", "ω": "omega", "Γ": "capital gamma", "Δ": "delta", "Θ": "capital theta", "Λ": "capital lambda",
+    "Ξ": "capital xi", "Π": "capital pi", "Σ": "capital sigma", "Υ": "upsilon", "Φ": "capital phi", "Ψ": "capital psi", "Ω": "omega",
+  };
+  // SI units, said in British spelling. Only read as units straight after a number.
+  const UNITS = {
+    m: "metre", s: "second", kg: "kilogram", g: "gram", mg: "milligram", "μg": "microgram", N: "newton", J: "joule", W: "watt",
+    V: "volt", A: "amp", "Ω": "ohm", Hz: "hertz", K: "kelvin", C: "coulomb", Pa: "pascal", eV: "electron volt", mol: "mole",
+    T: "tesla", F: "farad", H: "henry", Wb: "weber", L: "litre", rad: "radian", km: "kilometre", cm: "centimetre",
+    mm: "millimetre", "μm": "micrometre", nm: "nanometre", pm: "picometre", fm: "femtometre", ms: "millisecond",
+    "μs": "microsecond", ns: "nanosecond", ps: "picosecond", kHz: "kilohertz", MHz: "megahertz", GHz: "gigahertz",
+    kW: "kilowatt", MW: "megawatt", GW: "gigawatt", kJ: "kilojoule", MJ: "megajoule", keV: "kilo electron volt",
+    MeV: "mega electron volt", GeV: "giga electron volt", TeV: "tera electron volt", mA: "milliamp", "μA": "microamp",
+    kV: "kilovolt", mV: "millivolt", "kΩ": "kilohm", "MΩ": "megohm", "μF": "microfarad", nF: "nanofarad", pF: "picofarad",
+    mT: "millitesla", "μT": "microtesla", kPa: "kilopascal", MPa: "megapascal", atm: "atmosphere", "μC": "microcoulomb",
+    nC: "nanocoulomb", kN: "kilonewton", mL: "millilitre", Bq: "becquerel", Gy: "gray", Sv: "sievert", lm: "lumen", lx: "lux",
+  };
+  const NO_PLURAL = new Set(["hertz", "kelvin", "kilohertz", "megahertz", "gigahertz", "lux", "millitesla", "microtesla", "tesla"]);
+  const plural = (w) => NO_PLURAL.has(w) ? w : w === "henry" ? "henries" : w + "s";
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const UNIT_ALT = Object.keys(UNITS).sort((a, b) => b.length - a.length).map(reEsc).join("|");
+  const UNIT_TERM = `(?:${UNIT_ALT})(?:\\^\\{[-−]?\\d\\})?`;
+  const UNIT_RE = new RegExp(`(\\d\\}?)(\\s?)(${UNIT_TERM}(?:\\s?[/·⋅ ]\\s?${UNIT_TERM})*)(?![\\w{])`, "g");
+  const UNIT_SPLIT = new RegExp(`([/·⋅ ]?)\\s?(${UNIT_ALT})(?:\\^\\{([-−]?\\d)\\})?`, "g");
+
+  function sayUnits(expr, value) {
+    const parts = [];
+    let per = false, lastNum = -1;
+    for (const m of expr.matchAll(UNIT_SPLIT)) {
+      const [, sep, u, expRaw] = m;
+      if (sep === "/") per = true;
+      const exp = expRaw ? parseInt(expRaw.replace("−", "-"), 10) : 1;
+      const name = UNITS[u];
+      if (per || exp < 0) {
+        const e = Math.abs(exp);
+        parts.push("per " + name + (e === 2 ? " squared" : e === 3 ? " cubed" : ""));
+      } else {
+        parts.push(exp === 2 ? "square " + name : exp === 3 ? "cubic " + name : name);
+        lastNum = parts.length - 1;
+      }
+    }
+    if (lastNum >= 0 && value !== "1") parts[lastNum] = parts[lastNum].replace(/(\w+)$/, (w) => plural(w));
+    return parts.join(" ");
+  }
+
+  const KEEP_WORDS = new Set("and the for are was not but its all has per any can sub sin cos tan sec csc cot log exp lim max min det mod sinh cosh tanh arg ln is in of to on or an by if so it be we no do".split(" "));
+  const OPS = "=+\\-−×·÷/<>≤≥≈∝";
+
+  function sayPower(c) {
+    c = c.trim();
+    if (c === "2") return " squared ";
+    if (c === "3") return " cubed ";
+    if (c === "T") return " transpose ";
+    if (c === "*" || c === "∗") return " star ";
+    if (c === "†") return " dagger ";
+    if (c === "′" || c === "'") return " prime ";
+    const neg = /^[-−]/.test(c);
+    const body = c.replace(/^[-−]\s*/, "");
+    if (/^[\d.]+$/.test(body) || /^[a-zA-Z]$/.test(body)) return ` to the ${neg ? "minus " : ""}${body} `;
+    return ` to the power ${neg ? "minus " : ""}${body} `;
+  }
+  function saySub(c) {
+    c = c.trim();
+    if (c === "0" || c === "o") return " nought ";
+    if (/^\d+$/.test(c)) return " " + c + " ";
+    if (/^[a-zA-Z]$/.test(c)) return " sub " + c + " ";
+    return " " + c + " ";
+  }
+
+  function toSpeech(raw) {
+    let s = raw;
+    // words split across a line break with a hyphen
+    s = s.replace(/-\u200B/g, "").replace(/\u200B/g, " ");
+    // unicode superscripts and subscripts become ^{..} and _{..}
+    s = s.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ]+/g, (m) => "^{" + [...m].map((c) => SUP[c]).join("") + "}");
+    s = s.replace(/[₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓᵢⱼₖₗₘₙₚₛₜ]+/g, (m) => "_{" + [...m].map((c) => SUB[c]).join("") + "}");
+    s = s.normalize("NFKC"); // italic maths letters → plain letters, ligatures → letters
+    // typed forms: x^2, x^(n+1), x_1
+    s = s.replace(/\^\s*\(([^()]{1,24})\)/g, "^{$1}").replace(/\^(?!\{)\s?([-−+]?[A-Za-z0-9.∞]+)/g, "^{$1}");
+    s = s.replace(/_\s*\(([^()]{1,24})\)/g, "_{$1}").replace(/(\S)_(?!\{)([A-Za-z0-9]+)/g, "$1_{$2}");
+    s = s.replace(/([\^_])\{\s*([^{}]*?)\s*\}/g, "$1{$2}");
+    // abbreviations
+    s = s.replace(/\be\.g\.,?/gi, "for example").replace(/\bi\.e\.,?/gi, "that is").replace(/\bFigs?\.\s?/g, "Figure ")
+      .replace(/\bEqs?n?s?\.\s?/g, "Equation ").replace(/\bcf\.\s?/g, "compare ").replace(/\bapprox\.\s?/g, "approximately ")
+      .replace(/\bvs\.?\s/g, "versus ").replace(/\bet al\./g, "and others");
+    if (opts.cite.checked) {
+      s = s.replace(/\s?\[\d+(?:\s*[,–-]\s*\d+)*\]/g, "");
+      const notAfter = "(?<!(?:Eq\\.|Eqs\\.|Eqn\\.|Equations?|Fig\\.|Figures?|Sections?|Sec\\.|and|to|or)\\s?)";
+      s = s.replace(new RegExp(notAfter + "\\s?\\(\\d{1,2}\\.\\d{1,3}[a-z]?\\)", "g"), "").replace(new RegExp(notAfter + "\\s?\\(\\d{1,3}[a-z]?\\)\\s*$", "g"), "");
+    }
+
+    if (opts.math.checked) {
+      s = s.replace(/(\d(?:\.\d+)?)[eE]([-−+]?\d+)\b/g, "$1 × 10^{$2}");
+      s = s.replace(/°\s?C\b/g, " degrees Celsius").replace(/°\s?F\b/g, " degrees Fahrenheit").replace(/°/g, " degrees ");
+      s = s.replace(UNIT_RE, (m, num, sp, expr, at, all) => {
+        if (!sp && /^s\b/.test(expr)) return m; // "1990s" is not seconds
+        const value = (all.slice(0, at + num.length).match(/[\d.]+\}?$/) || [""])[0].replace("}", "");
+        return `${num} ${sayUnits(expr, value)}`;
+      });
+      const isMath = new RegExp(`[=×·≈≤≥∝∫∑√∂∇]|\\^\\{|_\\{|\\s[+−-]\\s`).test(s);
+      if (isMath) {
+        // function names
+        s = s.replace(/\bsin\b/g, "sine").replace(/\bln\b/g, "log").replace(/\bexp\b/g, "exponential of")
+          .replace(/\blim\b/g, "the limit").replace(/\bdet\b/g, "determinant of");
+        // products of variables written together: "ut" → "u t", "mc^2" → "m c squared", "2as" → "2 a s"
+        const spaceOut = (w) => (KEEP_WORDS.has(w) || KEEP_WORDS.has(w.toLowerCase())) ? w : w.split("").join(" ");
+        s = s.replace(new RegExp(`(?<=[${OPS}(]\\s?)(?<![A-Za-z])([A-Za-z]{2,3})(?![A-Za-z])`, "g"), (m, w) => spaceOut(w));
+        s = s.replace(new RegExp(`(?<![A-Za-z])([A-Za-z]{2,3})(?![A-Za-z])(?=\\s?(?:[${OPS})]|\\^\\{|_\\{))`, "g"), (m, w) => spaceOut(w));
+        s = s.replace(/\b(\d+)([a-z]{1,3})\b/g, (m, n, w) => /^(st|nd|rd|th)$/.test(w) ? m : `${n} ${w.split("").join(" ")}`);
+        // a lone "a" is a variable here, so say the letter
+        s = s.replace(new RegExp(`(?<=(?:^|[\\s(])(?:[A-Za-z]|\\d|[${OPS}])\\s?)\\ba\\b|\\ba\\b(?=\\s?(?:[A-Za-z](?![A-Za-z])|[${OPS}]|\\^\\{|_\\{))`, "g"), "A");
+        // calculus
+        s = s.replace(/d\^\{2\}\s?([A-Za-z])\s?\/\s?d\s?([A-Za-z])\^\{2\}/g, " d two $1 by d $2 squared ");
+        s = s.replace(/\bd\s?([A-Za-z])\s?\/\s?d\s?([A-Za-z])\b/g, " d $1 by d $2 ");
+        s = s.replace(/∂\^\{2\}\s?([A-Za-z])\s?\/\s?∂\s?([A-Za-z])\^\{2\}/g, " partial two $1 by partial $2 squared ");
+        s = s.replace(/∂\s?([A-Za-z])\s?\/\s?∂\s?([A-Za-z])/g, " partial $1 by partial $2 ");
+        s = s.replace(/[∑Σ]\s*_\{([^{}]*)\}\s*\^\{([^{}]*)\}/g, " the sum from $1 to $2 of ");
+        s = s.replace(/∫\s*_\{([^{}]*)\}\s*\^\{([^{}]*)\}/g, " the integral from $1 to $2 of ");
+        s = s.replace(/∑/g, " the sum of ");
+      }
+      // simple fractions
+      s = s.replace(/(?<![\d.\/])1\/2(?![\d\/])/g, " one half ").replace(/(?<![\d.\/])1\/3(?![\d\/])/g, " one third ")
+        .replace(/(?<![\d.\/])2\/3(?![\d\/])/g, " two thirds ").replace(/(?<![\d.\/])1\/4(?![\d\/])/g, " one quarter ")
+        .replace(/(?<![\d.\/])3\/4(?![\d\/])/g, " three quarters ");
+      // powers and subscripts
+      s = s.replace(/\)\s*\^\{/g, ") all^{");
+      s = s.replace(/\^\{([^{}]*)\}/g, (m, c) => sayPower(c));
+      s = s.replace(/_\{([^{}]*)\}/g, (m, c) => saySub(c));
+      s = s.replace(/\|([^|]{1,24})\|/g, " the magnitude of $1 ").replace(/‖([^‖]{1,24})‖/g, " the magnitude of $1 ");
+      s = s.replace(/(\d|\b[a-zA-Z])!/g, "$1 factorial");
+      // a hyphen used as a minus sign
+      s = s.replace(/(^|[=(\[{]\s*)-(?=\s?[\w(.])/g, "$1 minus ");
+      s = s.replace(/(\b[\w.]+|[)\]}])\s+-\s+(?=([\w.]+|[(\[]))/g, (m, left, right) => {
+        const operand = (t) => /^[\d.]+$/.test(t) || /^[A-Za-z]$/.test(t) || /^[()\[\]{}]$/.test(t);
+        return operand(left) || operand(right) ? `${left} minus ` : m;
+      });
+      if (isMath) s = s.replace(/\b([A-Za-z\d])-([A-Za-z\d])\b/g, "$1 minus $2");
+      // a slash between words is "or", otherwise "over"
+      s = s.replace(/(\S+)\s*\/\s*(?=(\S+))/g, (m, a, b) => /^[A-Za-z]{2,}$/.test(a) && /^[A-Za-z]{2,}/.test(b) && !(isMath && a.length < 3) ? (/^or\b/i.test(b) ? `${a} ` : `${a} or `) : `${a} over `);
+      // Greek letters and symbols
+      s = s.replace(/[α-ωϵϑϕϱςΓΔΘΛΞΠΣΥΦΨΩ]/g, (c) => ` ${GREEK[c] || c} `);
+      const SYM = [
+        [/ħ/g, " h bar "], [/ℓ/g, " ell "], [/Å/g, " angstroms "], [/∞/g, " infinity "], [/∂/g, " partial "], [/∇/g, " del "],
+        [/[≈≃≅]/g, " is approximately "], [/≠/g, " is not equal to "], [/≡/g, " is defined as "], [/:=/g, " is defined as "],
+        [/≪/g, " is much less than "], [/≫/g, " is much greater than "], [/[≤⩽]/g, " is less than or equal to "],
+        [/[≥⩾]/g, " is greater than or equal to "], [/</g, " is less than "], [/>/g, " is greater than "],
+        [/±/g, " plus or minus "], [/∓/g, " minus or plus "], [/=/g, " equals "], [/\+/g, " plus "], [/−/g, " minus "],
+        [/[×✕]/g, " times "], [/[·⋅∙]/g, " times "], [/(?<=\w\s?)\*(?=\s?\w)/g, " times "], [/÷/g, " divided by "],
+        [/√/g, " the square root of "], [/∛/g, " the cube root of "], [/∮/g, " the loop integral of "], [/∫/g, " the integral of "],
+        [/∏/g, " the product of "], [/[→⟶]/g, " goes to "], [/⇒/g, " which means "], [/[⇔↔]/g, " if and only if "],
+        [/∝/g, " is proportional to "], [/∈/g, " in "], [/∉/g, " not in "], [/∀/g, " for all "], [/∃/g, " there exists "],
+        [/∥/g, " parallel to "], [/⊥/g, " perpendicular to "], [/∠/g, " angle "], [/′/g, " prime "], [/″/g, " double prime "],
+        [/[⟨⟩]/g, " "],
+      ];
+      for (const [re, w] of SYM) s = s.replace(re, w);
+    }
+
+    if (opts.dashes.checked) {
+      s = s.replace(/(\d\w*)\s?[–—]\s?(\d)/g, "$1 to $2");
+      s = s.replace(/[–—―]/g, " ");
+      s = s.replace(/(\p{L})-(?=\p{L})/gu, "$1 ");
+      s = s.replace(/\s-+\s/g, " ").replace(/^-+\s|\s-+$/g, " ");
+    }
+    if (opts.commas.checked) s = s.replace(/,/g, " ");
+    s = s.replace(/[(){}\[\]]/g, " ");
+    return s.replace(/\s+/g, " ").replace(/\s+([.?!;:])/g, "$1").trim();
+  }
+
+  // =====================================================================
+  //  Text positions on the PDF page
+  // =====================================================================
+  // Builds the page's text and remembers where every piece sits on the page.
+  // Small raised text becomes ^{..}, small lowered text becomes _{..}, so maths reads properly.
+  function buildPageText(items, vp) {
+    let text = "";
+    const boxes = [];
+    let baseY = null, baseH = null, prevEnd = null, script = null;
+    for (const it of items) {
+      if (typeof it.str !== "string" || !it.str.length) continue;
+      if (!it.str.trim()) { if (text && !/\s$/.test(text)) text += " "; continue; }
+      const tx = pdfjsLib.Util.transform(vp.transform, it.transform);
+      const h = Math.hypot(tx[2], tx[3]) || it.height || 10;
+      const x = tx[4], y = tx[5];
+      const w = it.width * vp.scale;
+      let kind = "normal", newLine = false, para = false;
+      if (baseY != null) {
+        const dy = y - baseY;
+        const small = h < baseH * 0.86;
+        const near = x >= prevEnd - baseH * 0.6 && x <= prevEnd + baseH * 1.2;
+        if (small && near && dy < -0.12 * baseH && dy > -baseH) kind = "sup";
+        else if (small && near && dy > 0.08 * baseH && dy < baseH * 0.8) kind = "sub";
+        else if (Math.abs(dy) > baseH * 0.5 || x < prevEnd - baseH * 3) {
+          newLine = true;
+          para = dy > baseH * 1.9 || dy < -baseH * 2 || Math.abs(h - baseH) > baseH * 0.15; // big gap or a heading
+        }
+      }
+      if (script && kind !== script) { text += "}"; script = null; }
+      if (newLine) {
+        text += text.endsWith("-") ? "\u200B" : para ? "\n" : " ";
+      } else if (kind === "normal" && prevEnd != null && x - prevEnd > h * 0.18 && !/\s$/.test(text) && !/^\s/.test(it.str)) {
+        text += " ";
+      }
+      if (kind !== "normal" && script !== kind) { text += kind === "sup" ? "^{" : "_{"; script = kind; }
+      const s = text.length;
+      text += it.str;
+      boxes.push({ l: x, t: y - h * 0.82, w, h: h * 1.06, s, e: text.length });
+      if (kind === "normal") { baseY = y; baseH = h; }
+      prevEnd = x + w;
+    }
+    if (script) text += "}";
+    return { text, boxes };
+  }
+
+  const segmenter = (typeof Intl !== "undefined" && Intl.Segmenter) ? new Intl.Segmenter("en", { granularity: "sentence" }) : null;
+  function chunkRange(text, a, b, max, out) {
+    while (b - a > max) {
+      let cut = -1;
+      for (const sep of [", ", "; ", ": ", " = "]) {
+        const i = text.lastIndexOf(sep, a + max);
+        if (i > a + max * 0.4) cut = Math.max(cut, i + 1);
+      }
+      if (cut < 0) { cut = text.lastIndexOf(" ", a + max); if (cut <= a) cut = a + max; }
+      out.push([a, cut]);
+      a = cut;
+      while (a < b && /\s/.test(text[a])) a++;
+    }
+    if (b > a) out.push([a, b]);
+  }
+  function segment(text) {
+    const segs = [];
+    if (segmenter) for (const x of segmenter.segment(text)) segs.push([x.index, x.index + x.segment.length]);
+    else { const re = /[^.!?\n]+(?:[.!?]+["')\]]*|\n|$)/g; let m; while ((m = re.exec(text)) && m[0]) segs.push([m.index, m.index + m[0].length]); }
+    const out = [];
+    for (let [a, b] of segs) {
+      while (a < b && /\s/.test(text[a])) a++;
+      while (b > a && /\s/.test(text[b - 1])) b--;
+      if (b > a) chunkRange(text, a, b, 200, out);
+    }
+    return out;
+  }
+
+  function sentenceBoxes(sn) {
+    const page = state.pages[sn.p];
+    const out = [];
+    for (const bx of page.boxes) {
+      if (bx.e <= sn.a || bx.s >= sn.b) continue;
+      const len = bx.e - bx.s || 1;
+      const f0 = Math.max(0, sn.a - bx.s) / len, f1 = Math.min(len, sn.b - bx.s) / len;
+      const nb = { l: bx.l + bx.w * f0, t: bx.t, w: bx.w * (f1 - f0), h: bx.h };
+      const prev = out[out.length - 1];
+      if (prev && Math.abs(prev.t - nb.t) < prev.h * 0.6 && nb.l <= prev.l + prev.w + prev.h * 1.5 && nb.l >= prev.l - 2) {
+        const r = Math.max(prev.l + prev.w, nb.l + nb.w);
+        const top = Math.min(prev.t, nb.t), bot = Math.max(prev.t + prev.h, nb.t + nb.h);
+        prev.w = r - prev.l; prev.t = top; prev.h = bot - top;
+      } else out.push(nb);
+    }
+    return out;
+  }
+
+  // =====================================================================
+  //  Loading and drawing the PDF
+  // =====================================================================
+  function showStatus(msg, isError) {
+    els.status.textContent = msg || "";
+    els.status.classList.toggle("error", !!isError);
+    els.status.hidden = !msg;
+  }
+
+  let observer = null;
+  async function loadPdf(data, name, key) {
+    pause();
+    showStatus("Opening " + name + "…");
+    const pdf = await pdfjsLib.getDocument({ data }).promise;
+    if (state.pdf && state.pdf !== pdf) state.pdf.destroy();
+    state.pdf = pdf;
+    state.pages = [];
+    state.sentences = [];
+    state.hlPage = -1;
+    els.viewer.innerHTML = "";
+    if (observer) observer.disconnect();
+    state.visible.clear();
+
+    for (let n = 1; n <= pdf.numPages; n++) {
+      if (n % 5 === 1 && pdf.numPages > 5) showStatus(`Reading page ${n} of ${pdf.numPages}…`);
+      const page = await pdf.getPage(n);
+      const vp = page.getViewport({ scale: 1 });
+      const tc = await page.getTextContent();
+      const { text, boxes } = buildPageText(tc.items, vp);
+      const pi = state.pages.length;
+      const el = document.createElement("div");
+      el.className = "page";
+      el.dataset.p = pi;
+      el.innerHTML = `<canvas></canvas><div class="hl"></div><div class="loading">Loading page ${n}…</div><div class="num">${n}</div>`;
+      els.viewer.appendChild(el);
+      const first = state.sentences.length;
+      for (const [a, b] of segment(text)) state.sentences.push({ p: pi, a, b, raw: text.slice(a, b), said: null, v: -1 });
+      state.pages.push({ n, w: vp.width, h: vp.height, text, boxes, el, first, last: state.sentences.length, rendered: 0, task: null });
+      page.cleanup();
+    }
+
+    els.docName.textContent = name;
+    els.pageCount.textContent = pdf.numPages;
+    els.pageNum.max = pdf.numPages;
+    state.docKey = key;
+    layoutPages();
+    observer = new IntersectionObserver((entries) => {
+      for (const en of entries) {
+        const p = +en.target.dataset.p;
+        if (en.isIntersecting) { state.visible.add(p); renderPage(p); } else state.visible.delete(p);
+      }
+    }, { rootMargin: "800px 0px" });
+    state.pages.forEach((p) => observer.observe(p.el));
+
+    const saved = store.get("pos." + key, 0);
+    state.idx = saved < state.sentences.length ? saved : 0;
+    showStatus("");
+    if (!state.sentences.length) showStatus("This PDF has no text inside it (it's probably a scan or photo), so there's nothing to read aloud.", true);
+    else if (state.idx > 0) { if (key !== "sample") showStatus(`Picked up where you left off on page ${state.pages[state.sentences[state.idx].p].n}.`); highlight(state.idx, true); }
+    else highlight(0, false);
+    updateUI();
+  }
+
+  function fitScale() {
+    const maxW = Math.max(...state.pages.map((p) => p.w), 1);
+    const avail = Math.max(200, els.viewer.clientWidth - 32);
+    return Math.min(avail / maxW, 2);
+  }
+  function layoutPages() {
+    if (state.fit) state.scale = fitScale();
+    for (const p of state.pages) {
+      p.el.style.width = Math.round(p.w * state.scale) + "px";
+      p.el.style.height = Math.round(p.h * state.scale) + "px";
+    }
+    els.zoomLabel.textContent = state.fit ? "Fit" : Math.round(state.scale * 100) + "%";
+    for (const p of state.visible) renderPage(p);
+  }
+  async function renderPage(pi) {
+    const p = state.pages[pi];
+    if (!p || !state.pdf) return;
+    const want = state.scale;
+    if (p.rendered === want || p.rendering === want) return;
+    p.rendering = want;
+    try {
+      if (p.task) { try { p.task.cancel(); } catch {} }
+      const page = await state.pdf.getPage(p.n);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      let vp = page.getViewport({ scale: want * dpr });
+      const maxPx = 12e6;
+      if (vp.width * vp.height > maxPx) vp = page.getViewport({ scale: want * dpr * Math.sqrt(maxPx / (vp.width * vp.height)) });
+      const off = document.createElement("canvas");
+      off.width = Math.floor(vp.width);
+      off.height = Math.floor(vp.height);
+      p.task = page.render({ canvasContext: off.getContext("2d"), viewport: vp });
+      await p.task.promise;
+      if (p.rendering !== want) return;
+      const old = p.el.querySelector("canvas");
+      old.replaceWith(off);
+      p.rendered = want;
+      const ld = p.el.querySelector(".loading");
+      if (ld) ld.remove();
+    } catch (err) {
+      if (!err || err.name !== "RenderingCancelledException") console.warn(err);
+    } finally {
+      if (p.rendering === want) p.rendering = 0;
+    }
+  }
+  function setZoom(scale) {
+    const anchor = currentPage();
+    const p = state.pages[anchor];
+    const rel = p ? (window.scrollY - (p.el.offsetTop - topH())) / p.el.offsetHeight : 0;
+    state.fit = scale === "fit";
+    if (!state.fit) state.scale = Math.min(4, Math.max(0.3, scale));
+    layoutPages();
+    if (p) window.scrollTo({ top: p.el.offsetTop - topH() + rel * p.el.offsetHeight });
+  }
+  let resizeT;
+  window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (state.fit) layoutPages(); syncBar(); }, 150); });
+
+  const topH = () => $(".toolbar").offsetHeight + 8;
+  function currentPage() {
+    const mid = window.innerHeight * 0.4;
+    let best = 0;
+    for (let i = 0; i < state.pages.length; i++) {
+      const r = state.pages[i].el.getBoundingClientRect();
+      if (r.top <= mid) best = i;
+      if (r.top > mid) break;
+    }
+    return best;
+  }
+  function goToPage(pi) {
+    pi = Math.max(0, Math.min(state.pages.length - 1, pi));
+    const p = state.pages[pi];
+    if (p) window.scrollTo({ top: p.el.offsetTop - topH() - 8, behavior: reduceMotion() ? "auto" : "smooth" });
+  }
+  const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let scrollRaf = 0;
+  window.addEventListener("scroll", () => {
+    if (scrollRaf) return;
+    scrollRaf = requestAnimationFrame(() => {
+      scrollRaf = 0;
+      if (document.activeElement !== els.pageNum) els.pageNum.value = (state.pages[currentPage()] || { n: 1 }).n;
+    });
+  }, { passive: true });
+
+  // =====================================================================
+  //  Highlight and reading
+  // =====================================================================
+  function highlight(i, scroll) {
+    if (state.hlPage >= 0 && state.pages[state.hlPage]) state.pages[state.hlPage].el.querySelector(".hl").innerHTML = "";
+    const sn = state.sentences[i];
+    if (!sn) return;
+    const page = state.pages[sn.p];
+    const layer = page.el.querySelector(".hl");
+    const boxes = sentenceBoxes(sn);
+    layer.innerHTML = boxes.map((b) =>
+      `<div style="left:${(b.l - 1) / page.w * 100}%;top:${(b.t - 1) / page.h * 100}%;width:${(b.w + 2) / page.w * 100}%;height:${(b.h + 2) / page.h * 100}%"></div>`).join("");
+    state.hlPage = sn.p;
+    if (scroll && opts.follow.checked && layer.firstChild) {
+      const r = layer.firstChild.getBoundingClientRect();
+      const top = topH(), bottom = window.innerHeight - els.player.offsetHeight;
+      if (r.top < top + 10 || r.bottom > bottom - 10) {
+        window.scrollTo({ top: window.scrollY + r.top - top - (bottom - top) * 0.3, behavior: reduceMotion() ? "auto" : "smooth" });
+      }
+    }
+  }
+  function spoken(i) {
+    const sn = state.sentences[i];
+    if (sn.v !== state.optVersion) {
+      const raw = sn.raw.replace(/-\u200B/g, "").replace(/\u200B/g, " ");
+      const skipNum = opts.pageNums.checked && /^\s*(?:page\s*)?\d{1,4}(?:\s*(?:of|\/)\s*\d{1,4})?\s*$/i.test(raw);
+      sn.said = skipNum ? "" : toSpeech(sn.raw);
+      sn.v = state.optVersion;
+    }
+    return sn.said;
+  }
+
+  function updateUI() {
+    const n = state.sentences.length;
+    els.icoPlay.hidden = state.playing;
+    els.icoPause.hidden = !state.playing;
+    els.playLabel.textContent = state.playing ? "Pause" : "Play";
+    els.speedOut.innerHTML = `<small>speed</small>${state.rate.toFixed(2)}×`;
+    if (!n) { els.progress.textContent = ""; return; }
+    let chars = 0;
+    for (let i = state.idx; i < n; i++) chars += state.sentences[i].raw.length;
+    const mins = chars / (900 * state.rate);
+    const sn = state.sentences[state.idx];
+    els.progress.textContent = `Page ${state.pages[sn.p].n} of ${state.pages.length} · ${mins < 1 ? "under a minute" : "about " + Math.round(mins) + " min"} left`;
+  }
+
+  // ---------- Voices ----------
+  const NOVELTY = /\b(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|junior|ralph|fred|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley)\b/i;
+  function voiceScore(v) {
+    const lang = (v.lang || "").replace("_", "-").toLowerCase();
+    let s = 0;
+    if (lang === "en-gb") s += 100; else if (lang.startsWith("en")) s += 40;
+    if (/natural|neural|premium|enhanced/i.test(v.name)) s += 30;
+    if (/online/i.test(v.name)) s += 8;
+    if (/\b(ryan|daniel|arthur|thomas|oliver|george)\b/i.test(v.name)) s += 14;
+    else if (/\b(sonia|libby|serena|kate|stephanie|maisie|hazel)\b/i.test(v.name)) s += 8;
+    if (/google uk english male/i.test(v.name)) s += 12;
+    if (NOVELTY.test(v.name)) s -= 120;
+    return s;
+  }
+  // Natural voices come from Kokoro, a small open speech model that runs on this device.
+  const NATURAL = [
+    ["bf_emma", "Emma", "British, calm"],
+    ["bf_isabella", "Isabella", "British, warm"],
+    ["bf_lily", "Lily", "British, soft"],
+    ["bf_alice", "Alice", "British, clear"],
+    ["bm_george", "George", "British, deep and steady"],
+    ["bm_fable", "Fable", "British, storyteller"],
+    ["bm_lewis", "Lewis", "British, relaxed"],
+    ["bm_daniel", "Daniel", "British, measured"],
+    ["af_heart", "Heart", "American, warmest"],
+    ["af_bella", "Bella", "American, smooth"],
+    ["af_nicole", "Nicole", "American, gentle and quiet"],
+    ["af_sarah", "Sarah", "American, bright"],
+    ["am_michael", "Michael", "American, steady"],
+    ["am_fenrir", "Fenrir", "American, deep"],
+  ];
+  const DEFAULT_NATURAL = "k:bf_emma";
+  const isGB = (v) => /^en[-_]gb$/i.test(v.lang);
+  const isNatural = () => els.voice.value.startsWith("k:");
+  const naturalId = () => els.voice.value.slice(2);
+  const savedVoice = () => { const v = store.get("voice", null); return v && !/^[kd]:/.test(v) ? "d:" + v : v; };
+
+  function buildVoiceList() {
+    const want = els.voice.value || savedVoice();
+    els.voice.innerHTML = "";
+    const add = (label, opts) => {
+      if (!opts.length) return;
+      const g = document.createElement("optgroup");
+      g.label = label;
+      for (const [value, text] of opts) g.appendChild(new Option(text, value));
+      els.voice.appendChild(g);
+    };
+    add(K.gpu === false ? "Natural voices (slow on this computer)" : "Natural voices (smooth, best)", NATURAL.map(([id, name, desc]) => ["k:" + id, `${name}: ${desc}`]));
+    const nice = (v) => v.name.replace(/^Microsoft\s+/, "").replace(/\s+-\s+English.*$/, "").replace(/\s*Online\s*/, " ");
+    const dev = (list) => list.map((v) => ["d:" + v.voiceURI, `${nice(v)} (${v.lang})`]);
+    add("Device voices: British", dev(state.voices.filter(isGB)));
+    add("Device voices: other English", dev(state.voices.filter((v) => !isGB(v) && /^en/i.test(v.lang))));
+    add("Device voices: other languages", dev(state.voices.filter((v) => !/^en/i.test(v.lang))));
+    const has = (v) => v && [...els.voice.options].some((o) => o.value === v);
+    const bestDevice = state.voices[0] ? "d:" + state.voices[0].voiceURI : null;
+    els.voice.value = has(want) ? want : (K.gpu === false && bestDevice) ? bestDevice : DEFAULT_NATURAL;
+    updateVoiceUI();
+  }
+  function loadVoices() {
+    if (synth) state.voices = synth.getVoices().slice().sort((a, b) => voiceScore(b) - voiceScore(a) || a.name.localeCompare(b.name));
+    buildVoiceList();
+  }
+  function updateVoiceUI() {
+    els.pitch.disabled = isNatural();
+    $("#voiceTip").textContent = isNatural()
+      ? (K.gpu === false
+        ? "Natural voices run on your computer. This browser has no graphics acceleration, so they may pause between sentences. Chrome, Edge or Safari on a recent Mac run them smoothly."
+        : "Natural voices run on your computer, so they're free and unlimited. The first time, the voice downloads once (about 160 MB). After that it starts in a few seconds.")
+      : "Device voices start instantly but can sound robotic. Choose a Natural voice at the top of the list for a smooth, human sound.";
+  }
+  const currentVoice = () => state.voices.find((v) => "d:" + v.voiceURI === els.voice.value) || null;
+
+  function makeUtterance(text) {
+    const u = new SpeechSynthesisUtterance(text);
+    const v = currentVoice();
+    if (v) { u.voice = v; u.lang = v.lang; }
+    u.rate = state.rate;
+    u.pitch = +els.pitch.value;
+    u.volume = +els.vol.value;
+    return u;
+  }
+  function cancelSpeech() {
+    state.token++;
+    if (synth) synth.cancel();
+    if (K.source) { K.source.onended = null; try { K.source.stop(); } catch {} K.source = null; }
+  }
+
+  // ---------- Natural voice engine ----------
+  // Runs in a background worker so the page stays responsive while it thinks.
+  function kokoroWorker(scope, g) { // scope: where messages go; g: the global whose fetch gets patched
+    const REPO = "onnx-community/Kokoro-82M-v1.0-ONNX";
+    const HF = "https://huggingface.co/" + REPO + "/resolve/main/";
+    const ORT_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/dist/";
+    let tts = null, base = "", manifest, useLocal = false, chain = Promise.resolve();
+    const dropped = new Set();
+    const nativeFetch = g.fetch.bind(g);
+    async function getManifest() {
+      if (manifest === undefined) {
+        try { const r = await nativeFetch(new URL("kokoro/manifest.json", base)); manifest = r.ok ? await r.json() : null; } catch { manifest = null; }
+      }
+      return manifest;
+    }
+    // When the page can't reach the model's home site, the same files are served next to the page, split into parts.
+    async function fromLocal(url) {
+      const m = await getManifest();
+      if (!m) return null;
+      let path = url.startsWith(HF) ? url.slice(HF.length) : url.startsWith(ORT_CDN) ? "ort/" + url.slice(ORT_CDN.length) : null;
+      if (!path) return null;
+      path = path.split("?")[0];
+      const entry = m.files[path];
+      if (!entry) return null;
+      const type = path.endsWith(".wasm") ? "application/wasm" : path.endsWith(".json") ? "application/json" : "application/octet-stream";
+      const parts = entry.parts || [path];
+      const body = new ReadableStream({
+        async start(ctrl) {
+          try {
+            for (const p of parts) {
+              const r = await nativeFetch(new URL("kokoro/" + p, base));
+              if (!r.ok) throw new Error("A voice file is missing (" + p + ")");
+              const reader = r.body.getReader();
+              for (;;) { const { done, value } = await reader.read(); if (done) break; ctrl.enqueue(value); }
+            }
+            ctrl.close();
+          } catch (e) { ctrl.error(e); }
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": type, "content-length": String(entry.size) } });
+    }
+    g.fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith(HF) || url.startsWith(ORT_CDN)) {
+        if (useLocal) { const r = await fromLocal(url); if (r) return r; }
+        try { return await nativeFetch(input, init); }
+        catch (err) { const r = await fromLocal(url); if (r) { useLocal = true; return r; } throw err; }
+      }
+      return nativeFetch(input, init);
+    };
+    async function load(m) {
+      base = m.base;
+      useLocal = !!m.preferLocal;
+      try {
+        const mod = await import("https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js");
+        let last = -1;
+        tts = await mod.KokoroTTS.from_pretrained(REPO, {
+          dtype: m.dtype, device: m.device,
+          progress_callback: (p) => {
+            if (p.status !== "progress" || !/\.onnx$/.test(p.file || "")) return;
+            const pct = Math.floor(p.progress);
+            if (pct !== last) { last = pct; scope.postMessage({ type: "progress", pct, total: p.total }); }
+          },
+        });
+        await tts.generate("Ready.", { voice: m.voice }); // warm up so the first sentence comes quickly
+        scope.postMessage({ type: "ready", local: useLocal });
+      } catch (err) {
+        scope.postMessage({ type: "error", message: String((err && err.message) || err) });
+      }
+    }
+    async function gen(m) {
+      if (dropped.delete(m.id)) { scope.postMessage({ type: "audio", id: m.id, audio: null }); return; }
+      try {
+        const out = await tts.generate(m.text, { voice: m.voice, speed: m.speed });
+        scope.postMessage({ type: "audio", id: m.id, audio: out.audio, rate: out.sampling_rate });
+      } catch (err) {
+        scope.postMessage({ type: "audio", id: m.id, error: String((err && err.message) || err) });
+      }
+    }
+    scope.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "load") load(m);
+      else if (m.type === "drop") for (const id of m.ids) dropped.add(id);
+      else if (m.type === "gen") chain = chain.then(() => gen(m));
+    };
+  }
+
+  function ensureAudio() {
+    if (!K.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      K.ctx = new AC();
+      K.gain = K.ctx.createGain();
+      K.gain.gain.value = +els.vol.value;
+      K.gain.connect(K.ctx.destination);
+    }
+    if (K.ctx.state === "suspended") K.ctx.resume();
+  }
+  function showLoad(text, pct) {
+    $("#kload").hidden = text == null;
+    if (text != null) { $("#kloadText").textContent = text; $("#kbarFill").style.width = (pct || 0) + "%"; }
+    syncBar();
+  }
+  // The same engine, run directly in the page. Made once, because it patches the page's fetch.
+  function inPageEngine() {
+    if (K.inPage) return K.inPage;
+    const eng = { onmessage: null, onerror: null, terminate() {} };
+    const scope = { onmessage: null, postMessage: (m) => setTimeout(() => eng.onmessage && eng.onmessage({ data: m })) };
+    kokoroWorker(scope, window);
+    eng.postMessage = (m) => scope.onmessage({ data: m });
+    K.inPage = eng;
+    return eng;
+  }
+  function loadNatural() {
+    if (K.ready) return K.ready;
+    K.ready = (async () => {
+      const gpu = await gpuCheck;
+      K.device = gpu ? "webgpu" : "wasm";
+      showLoad("Starting the natural voice…", 0);
+      const start = (engine) => new Promise((resolve, reject) => {
+        K.worker = engine;
+        engine.onerror = (e) => { if (e && e.preventDefault) e.preventDefault(); reject(new Error((e && e.message) || "the background voice helper was blocked")); };
+        engine.onmessage = (e) => {
+          const m = e.data;
+          if (m.type === "progress") {
+            showLoad(m.pct >= 100 ? "Almost ready…" : `Downloading the natural voice: ${m.pct}% of ${Math.round(m.total / 1e6)} MB. This only happens once.`, m.pct);
+          } else if (m.type === "ready") resolve();
+          else if (m.type === "error") reject(new Error(m.message));
+          else if (m.type === "audio") {
+            const p = K.pending.get(m.id);
+            if (!p) return;
+            K.pending.delete(m.id);
+            if (m.error) p.reject(new Error(m.error)); else p.resolve(m.audio ? { audio: m.audio, rate: m.rate } : null);
+          }
+        };
+        engine.postMessage({ type: "load", base: document.baseURI, device: K.device, dtype: gpu ? "fp16" : "q8", voice: isNatural() ? naturalId() : "bf_emma", preferLocal: /[?&]localvoice\b/.test(location.search) });
+      });
+      const forceInPage = /[?&]inpage\b/.test(location.search);
+      try {
+        if (forceInPage || K.inPage) throw new Error("in-page");
+        // A background helper keeps the page smooth, but some pages don't allow one.
+        const src = "(" + kokoroWorker.toString() + ")(self, self)";
+        await start(new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })), { type: "module" }));
+      } catch (err) {
+        if (K.worker && K.worker.terminate) K.worker.terminate();
+        if (!forceInPage && !K.inPage) console.warn("Voice helper unavailable, running in the page instead:", err);
+        await start(inPageEngine());
+      }
+      showLoad(null);
+      store.set("naturalCached", true);
+    })();
+    K.ready.catch((err) => {
+      K.ready = null;
+      if (K.worker) { K.worker.terminate(); K.worker = null; }
+      showLoad(null);
+      naturalFailed(err);
+    });
+    return K.ready;
+  }
+  function naturalFailed(err) {
+    const wasPlaying = state.playing;
+    pause();
+    store.set("naturalCached", false);
+    const best = state.voices.find(isGB) || state.voices[0];
+    if (best && isNatural()) { els.voice.value = "d:" + best.voiceURI; updateVoiceUI(); }
+    showStatus(`The natural voice couldn't start in this browser (${(err && err.message) || err}). Using your device's voice for now.`, true);
+    if (wasPlaying && best) speakFrom(state.idx);
+  }
+  const audioSuffix = () => `|${els.voice.value}|${state.rate}|${state.optVersion}`;
+  function genNatural(text) {
+    const id = K.nextId++;
+    const promise = new Promise((resolve, reject) => K.pending.set(id, { resolve, reject }));
+    K.worker.postMessage({ type: "gen", id, text, voice: naturalId(), speed: Math.min(2, Math.max(0.5, state.rate)) });
+    return { id, promise };
+  }
+  function getAudio(i) {
+    const key = i + audioSuffix();
+    let e = K.cache.get(key);
+    if (!e) { e = { i, ...genNatural(spoken(i)) }; K.cache.set(key, e); }
+    return e.promise;
+  }
+  function trimCache(from, to) {
+    const suffix = audioSuffix(), drop = [];
+    for (const [key, e] of K.cache) {
+      if (e.i < from || e.i > to || !key.endsWith(suffix)) { K.cache.delete(key); drop.push(e.id); }
+    }
+    if (drop.length && K.worker) K.worker.postMessage({ type: "drop", ids: drop });
+  }
+  function nextSpoken(i) {
+    for (let j = i + 1; j < state.sentences.length; j++) if (spoken(j)) return j;
+    return -1;
+  }
+  function playBuffer(res, onEnd) {
+    const buf = K.ctx.createBuffer(1, res.audio.length, res.rate);
+    buf.copyToChannel(res.audio, 0);
+    const src = K.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(K.gain);
+    src.onended = () => { if (K.source !== src) return; K.source = null; if (onEnd) onEnd(); };
+    K.source = src;
+    src.start();
+  }
+  async function playNatural(i, my) {
+    try {
+      await loadNatural();
+      if (my !== state.token || !state.playing) return;
+      trimCache(i, i + 3);
+      const current = getAudio(i);
+      for (let j = i, n = 0; n < 2; n++) { j = nextSpoken(j); if (j < 0) break; getAudio(j); } // get ahead so there are no gaps
+      const res = await current;
+      if (my !== state.token || !state.playing) return;
+      if (!res) { speakFrom(i + 1); return; }
+      playBuffer(res, () => { if (my === state.token && state.playing) speakFrom(i + 1); });
+    } catch (err) {
+      if (my === state.token) naturalFailed(err);
+    }
+  }
+
+  function speakFrom(i) {
+    const natural = isNatural();
+    if (!natural && !synth) { showStatus("This browser can't speak text. Pick a Natural voice, or try Chrome, Edge or Safari.", true); return; }
+    if (natural) ensureAudio();
+    cancelSpeech();
+    while (i < state.sentences.length && !spoken(i)) i++;
+    if (i >= state.sentences.length) { finished(); return; }
+    i = Math.max(0, i);
+    state.idx = i;
+    state.playing = true;
+    store.set("pos." + state.docKey, i);
+    highlight(i, true);
+    const text = spoken(i);
+    els.caption.textContent = text;
+    updateUI();
+    const my = state.token;
+    keepAwake(true);
+    if (natural) { playNatural(i, my); return; }
+    const u = makeUtterance(text);
+    u.onend = () => { if (my === state.token && state.playing) speakFrom(i + 1); };
+    u.onerror = (e) => {
+      if (my !== state.token || e.error === "interrupted" || e.error === "canceled") return;
+      if (e.error === "not-allowed") { pause(); showStatus("Press Play to start. The browser needs a click first."); return; }
+      if (state.playing) speakFrom(i + 1);
+    };
+    state.current = u; // keeping a reference stops some browsers losing the end event
+    synth.speak(u);
+    keepAwake(true);
+  }
+  function pause() { state.playing = false; cancelSpeech(); keepAwake(false); updateUI(); }
+  function finished() {
+    state.playing = false; keepAwake(false);
+    state.idx = 0; store.set("pos." + state.docKey, 0);
+    els.caption.textContent = "Finished. Press Play to start again from the top.";
+    updateUI();
+  }
+  function move(delta) {
+    const n = state.sentences.length;
+    if (!n) return;
+    let i = state.idx + delta;
+    while (i > 0 && i < n - 1 && !spoken(i)) i += delta;
+    i = Math.min(n - 1, Math.max(0, i));
+    if (state.playing) speakFrom(i);
+    else { state.idx = i; store.set("pos." + state.docKey, i); highlight(i, true); els.caption.textContent = spoken(i) || "…"; updateUI(); }
+  }
+  function readPage() {
+    const pi = currentPage();
+    const p = state.pages[pi];
+    if (!p) return;
+    const i = state.sentences.findIndex((s) => s.p >= pi);
+    if (i >= 0) speakFrom(i);
+  }
+  async function keepAwake(on) {
+    try {
+      if (on && !state.wake && navigator.wakeLock) state.wake = await navigator.wakeLock.request("screen");
+      if (!on && state.wake) { state.wake.release(); state.wake = null; }
+    } catch { state.wake = null; }
+  }
+  function restartIfPlaying() { if (state.playing) speakFrom(state.idx); }
+
+  // =====================================================================
+  //  Controls
+  // =====================================================================
+  els.play.addEventListener("click", () => { showStatus(""); state.playing ? pause() : speakFrom(state.idx); });
+  $("#back").addEventListener("click", () => move(-1));
+  $("#fwd").addEventListener("click", () => move(1));
+  $("#repeat").addEventListener("click", () => speakFrom(state.idx));
+  $("#readPage").addEventListener("click", readPage);
+  const setRate = (r) => { state.rate = Math.round(Math.min(3, Math.max(0.5, r)) * 20) / 20; store.set("rate", state.rate); updateUI(); clearTimeout(rateT); rateT = setTimeout(restartIfPlaying, 250); };
+  let rateT;
+  $("#slower").addEventListener("click", () => setRate(state.rate - 0.05));
+  $("#faster").addEventListener("click", () => setRate(state.rate + 0.05));
+
+  $("#settingsBtn").addEventListener("click", (e) => {
+    els.settings.hidden = !els.settings.hidden;
+    e.currentTarget.setAttribute("aria-expanded", String(!els.settings.hidden));
+    e.currentTarget.setAttribute("aria-pressed", String(!els.settings.hidden));
+    syncBar();
+  });
+  for (const [k, box] of Object.entries(opts)) {
+    const saved = store.get("opt." + k, null);
+    if (saved != null) box.checked = saved;
+    box.addEventListener("change", () => { store.set("opt." + k, box.checked); state.optVersion++; if (k !== "follow") restartIfPlaying(); });
+  }
+  function bindSlider(input, out, fmt, key) {
+    const saved = store.get(key, null);
+    if (saved != null) input.value = saved;
+    out.textContent = fmt(+input.value);
+    input.addEventListener("input", () => { out.textContent = fmt(+input.value); });
+    input.addEventListener("change", () => { store.set(key, +input.value); restartIfPlaying(); });
+  }
+  bindSlider(els.pitch, $("#pitchOut"), (v) => v.toFixed(2), "pitch");
+  bindSlider(els.vol, $("#volOut"), (v) => Math.round(v * 100) + "%", "vol");
+  els.vol.addEventListener("input", () => { if (K.gain) K.gain.gain.value = +els.vol.value; });
+  const SAMPLE_LINE = "Hello. This is how I sound when reading your document.";
+  els.voice.addEventListener("change", async () => {
+    store.set("voice", els.voice.value);
+    updateVoiceUI();
+    showStatus("");
+    if (state.playing) { restartIfPlaying(); return; }
+    cancelSpeech();
+    if (isNatural()) {
+      ensureAudio();
+      const my = state.token;
+      try {
+        await loadNatural();
+        const res = await genNatural(SAMPLE_LINE).promise;
+        if (my === state.token && res) playBuffer(res);
+      } catch {}
+    } else if (synth) synth.speak(makeUtterance(SAMPLE_LINE));
+  });
+  loadVoices();
+  if (synth) synth.addEventListener ? synth.addEventListener("voiceschanged", loadVoices) : (synth.onvoiceschanged = loadVoices);
+  gpuCheck.then((gpu) => {
+    K.gpu = gpu;
+    loadVoices();
+    if (isNatural() && store.get("naturalCached", false)) loadNatural(); // already downloaded before, so get it ready now
+  });
+
+  $("#prevPage").addEventListener("click", () => goToPage(currentPage() - 1));
+  $("#nextPage").addEventListener("click", () => goToPage(currentPage() + 1));
+  els.pageNum.addEventListener("change", () => goToPage((+els.pageNum.value || 1) - 1));
+  $("#zoomIn").addEventListener("click", () => setZoom(state.scale * 1.2));
+  $("#zoomOut").addEventListener("click", () => setZoom(state.scale / 1.2));
+  els.zoomLabel.addEventListener("click", () => setZoom("fit"));
+
+  // Click a line on the page to read from there.
+  els.viewer.addEventListener("click", (e) => {
+    const el = e.target.closest(".page");
+    if (!el) return;
+    const p = state.pages[+el.dataset.p];
+    const r = el.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * p.w, y = (e.clientY - r.top) / r.height * p.h;
+    let best = null, bestD = Infinity;
+    for (const b of p.boxes) {
+      const dx = x < b.l ? b.l - x : x > b.l + b.w ? x - b.l - b.w : 0;
+      const dy = y < b.t ? b.t - y : y > b.t + b.h ? y - b.t - b.h : 0;
+      const d = dx + dy * 3;
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    if (!best || bestD > 60) return;
+    const frac = Math.min(1, Math.max(0, (x - best.l) / (best.w || 1)));
+    const off = best.s + Math.floor(frac * (best.e - best.s));
+    let i = state.sentences.findIndex((s, k) => k >= p.first && s.p === p.n - 1 + 0 * k && off >= s.a && off < s.b);
+    if (i < 0) i = state.sentences.findIndex((s, k) => k >= p.first && k < p.last && s.b > off);
+    if (i < 0) i = p.first;
+    if (i < state.sentences.length) speakFrom(i);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.target.closest("input, textarea, select, [contenteditable]") || e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+    if (k === " " && !e.target.closest("button")) { e.preventDefault(); els.play.click(); }
+    else if (k === "ArrowRight") { e.preventDefault(); move(1); }
+    else if (k === "ArrowLeft") { e.preventDefault(); move(-1); }
+    else if (k === "r" || k === "R") speakFrom(state.idx);
+    else if (k === "p" || k === "P") readPage();
+    else if (k === "]") setRate(state.rate + 0.05);
+    else if (k === "[") setRate(state.rate - 0.05);
+    else if (k === "+" || k === "=") setZoom(state.scale * 1.2);
+    else if (k === "-") setZoom(state.scale / 1.2);
+  });
+
+  // ---------- Opening files ----------
+  async function openFile(file) {
+    if (!file) return;
+    if (!(file.type === "application/pdf" || /\.pdf$/i.test(file.name))) { showStatus("That isn't a PDF. Pick a .pdf file.", true); return; }
+    if (!window.pdfjsLib) { showStatus("The PDF viewer couldn't load. Check your internet connection and refresh.", true); return; }
+    try {
+      await loadPdf(new Uint8Array(await file.arrayBuffer()), file.name.replace(/\.pdf$/i, ""), `${file.name}:${file.size}`);
+      window.scrollTo({ top: 0 });
+      els.caption.textContent = "Press Play, or click any line on the page to start reading from there.";
+    } catch (err) {
+      const msg = /password/i.test(err && (err.name + err.message)) ? "This PDF is password-protected. Remove the password and try again." : (err && err.message) || String(err);
+      showStatus("Couldn't open that file: " + msg, true);
+    }
+  }
+  $("#file").addEventListener("change", (e) => { openFile(e.target.files[0]); e.target.value = ""; });
+  // When installed as an app, PDFs opened from Finder ("Open With → Open Reader") arrive here.
+  if ("launchQueue" in window) {
+    window.launchQueue.setConsumer(async (params) => {
+      if (params.files && params.files.length) openFile(await params.files[0].getFile());
+    });
+  }
+  const drop = $("#drop");
+  let dragDepth = 0;
+  window.addEventListener("dragenter", (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { dragDepth++; drop.hidden = false; } });
+  window.addEventListener("dragleave", () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) drop.hidden = true; });
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => { e.preventDefault(); dragDepth = 0; drop.hidden = true; openFile(e.dataTransfer && e.dataTransfer.files[0]); });
+
+  function syncBar() { document.documentElement.style.setProperty("--bar-h", els.player.offsetHeight + "px"); }
+  if (window.ResizeObserver) new ResizeObserver(syncBar).observe(els.player);
+  syncBar();
+  updateUI();
+
+  // =====================================================================
+  //  Sample PDF, built here so the page opens with something to read
+  // =====================================================================
+  function samplePdf() {
+    const esc = (t) => t.replace(/[\\()]/g, "\\$&").replace(/×/g, "\\327").replace(/—/g, "\\227");
+    const B = 11, S = 7.5;
+    const sup = (t) => `/F1 ${S} Tf 4 Ts (${esc(t)}) Tj /F1 ${B} Tf 0 Ts `;
+    const sub = (t) => `/F1 ${S} Tf -2.5 Ts (${esc(t)}) Tj /F1 ${B} Tf 0 Ts `;
+    const tx = (t) => `(${esc(t)}) Tj `;
+    const lines = [
+      [34, `/F2 20 Tf ` + tx("Kinematics and energy")],
+      [20, `/F1 10 Tf ` + tx("A sample page for Open Reader") + `/F1 ${B} Tf `],
+      [30, tx("This is a sample so you can hear how physics gets read out. Click any line on")],
+      [16, tx("this page to start reading from there, or open your own PDF at the top.")],
+      [28, `/F2 13 Tf ` + tx("1  Motion with constant acceleration") + `/F1 ${B} Tf `],
+      [22, tx("For constant acceleration the displacement is s = ut + 1/2 at") + sup("2") + tx(", where u is the")],
+      [16, tx("initial velocity and a is the acceleration. The final velocity satisfies")],
+      [22, tx("v") + sup("2") + tx(" = u") + sup("2") + tx(" + 2as.")],
+      [28, `/F2 13 Tf ` + tx("2  Gravity and energy") + `/F1 ${B} Tf `],
+      [22, tx("Newton's law of gravitation gives F = Gm") + sub("1") + tx("m") + sub("2") + tx(" / r") + sup("2") + tx(", where")],
+      [16, tx("G = 6.67 × 10") + sup("-11") + tx(" N m") + sup("2") + tx(" kg") + sup("-2") + tx(".")],
+      [22, tx("Einstein's relation E = mc") + sup("2") + tx(" links mass and energy. The speed of light is")],
+      [16, tx("about 3.00 × 10") + sup("8") + tx(" m/s, so even a tiny mass stores a huge amount of energy.")],
+      [22, tx("Energy — unlike momentum — is a scalar, so it has a size but no direction. The")],
+      [16, tx("kinetic energy of a 2.0 kg ball moving at 3.0 m/s is 1/2 mv") + sup("2") + tx(" = 9.0 J.")],
+    ];
+    let content = `BT /F1 ${B} Tf 72 740 Td `;
+    lines.forEach(([dy, ops], i) => { content += (i ? `0 -${dy} Td ` : "") + ops + "\n"; });
+    content += "ET";
+    const objs = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>",
+      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+    ];
+    let out = "%PDF-1.4\n";
+    const offs = [];
+    objs.forEach((o, i) => { offs.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+    const xref = out.length;
+    out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map((o) => String(o).padStart(10, "0") + " 00000 n \n").join("");
+    out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+    return new TextEncoder().encode(out);
+  }
+  if (window.pdfjsLib) {
+    loadPdf(samplePdf(), "Sample: Kinematics and energy", "sample").catch((err) => showStatus("Couldn't draw the sample page: " + err.message, true));
+  } else showStatus("The PDF viewer couldn't load. Check your internet connection and refresh.", true);
+
+  window.__openReader = { toSpeech, state, K }; // handy for checking how a line will be read
+})();
+</script>
+
+</body>
+</html>
